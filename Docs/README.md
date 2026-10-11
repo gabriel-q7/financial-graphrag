@@ -1,7 +1,7 @@
 # Documentação — Financial GraphRAG
 
 Documentação técnica do projeto. O [README da raiz](../README.md) é o guia rápido de instalação;
-estes documentos aprofundam cada parte.
+estes documentos aprofundam cada parte. Para rodar tudo: `make dev` (detalhes em [Desenvolvimento](development.md)).
 
 | Documento | Conteúdo | Para quem |
 | --- | --- | --- |

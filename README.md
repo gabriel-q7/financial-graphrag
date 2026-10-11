@@ -77,9 +77,53 @@ financial-graphrag/
 | Docker + Compose v2 | Docker 29.7, Compose 5.5   |
 | Go             | 1.27                            |
 | Node.js        | 22.12+ (testado com 22.21)      |
+| GNU Make, Bash, curl, openssl, ss (iproute2) | padrão em distribuições Linux |
 
 Recursos: o Neo4j usa ~1,5 GB de RAM (heap 1 GB + page cache 512 MB). O modelo de chat
 `qwen3:4b-instruct` requer ~2,5 GB de disco e ~3,2 GB de RAM; `nomic-embed-text` ~270 MB.
+
+## Início rápido
+
+```bash
+make dev
+```
+
+Um único comando, idempotente, que:
+
+1. cria o `.env` a partir do `.env.example` com senha do Neo4j e token admin aleatórios (se ainda não existir);
+2. verifica ferramentas, versões e se as portas 8080/5173 estão livres;
+3. sobe Neo4j e Ollama e espera os healthchecks;
+4. baixa os modelos do Ollama **que ainda não existem** (só na primeira vez);
+5. instala as dependências do frontend se necessário;
+6. compila a API, aplica migrações e o seed (sem duplicar dados);
+7. inicia API e frontend juntos, com logs prefixados `[api]`/`[web]`, e mostra as URLs.
+
+Abra **http://localhost:5173**. `Ctrl+C` encerra API e frontend; os contêineres continuam
+rodando (`make stop` para pará-los). Se uma das aplicações cair, a outra também é encerrada.
+
+Outros comandos (`make help` lista todos):
+
+| Comando | O que faz |
+| --- | --- |
+| `make dev` | sobe tudo (acima) |
+| `make setup` | prepara tudo sem iniciar API/frontend |
+| `make stop` | para API/frontend e os contêineres (dados preservados) |
+| `make stop-apps` | encerra API/frontend que ficaram rodando em outro terminal |
+| `make down` | remove os contêineres (volumes com dados e modelos preservados) |
+| `make status` | contêineres, portas e `/api/health` |
+| `make seed` / `make migrate` | aplica seed + migrações / só migrações |
+| `make reset-db` | **apaga** os dados do Neo4j e refaz o seed (pede confirmação) |
+| `make models` | baixa os modelos configurados que faltam |
+| `make test` / `make test-integration` | testes unitários / integração com Neo4j real |
+| `make lint` / `make build` | gofmt + vet + typecheck / binários e bundle de produção |
+| `make logs` | logs do Neo4j e Ollama |
+
+Opções: `SKIP_MODELS=1 make dev` (não baixa modelos), `SKIP_SEED=1 make dev` (só migrações),
+`FORCE=1 make reset-db` (sem confirmação). Os scripts ficam em [`scripts/`](scripts/).
+
+## Execução manual (passo a passo)
+
+As seções 1–4 descrevem o que `make dev` faz, para quem quiser entender ou depurar cada etapa.
 
 ## 1. Configurar variáveis de ambiente
 
@@ -298,6 +342,8 @@ O dataset (`data/seed/financial_network.json`) tem 8 pessoas, 5 empresas, 13 con
 e gravado em uma única transação com `MERGE` por `id`.
 
 ## Testes
+
+Atalhos: `make test`, `make test-integration`, `make lint`, `make build`. Equivalentes manuais:
 
 ```bash
 # Backend — testes unitários (validação, DTOs, handlers, config, seed, health, ollama)

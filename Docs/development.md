@@ -19,37 +19,53 @@ no frontend, `package.json` sem `^`/`~` e `package-lock.json` versionado (use `n
 ## Fluxo diário
 
 ```bash
-# 1. Serviços
-docker compose up -d --wait
-
-# 2. Variáveis no shell (backend lê do ambiente, não do arquivo)
-set -a; source .env; set +a
-
-# 3. API (terminal 1)
-cd backend && go run ./cmd/api
-
-# 4. Frontend (terminal 2)
-cd frontend && npm run dev     # http://localhost:5173
+make dev        # sobe tudo; Ctrl+C encerra API e frontend
+make stop       # ao final do dia: para também os contêineres
 ```
 
-Parar: `Ctrl+C` na API e no Vite; `docker compose stop` para os contêineres
-(`docker compose down -v` apaga também os dados e os modelos baixados).
+`make dev` é idempotente: pode ser executado sempre que for trabalhar. Na primeira vez ele
+cria o `.env`, baixa os modelos e instala dependências; nas seguintes só verifica e inicia.
+
+## Scripts
+
+Ficam em `scripts/` e são chamados pelo `Makefile`. Todos usam `set -euo pipefail` e as
+funções de `scripts/lib.sh` (mensagens, carga do `.env`, `docker compose`, portas).
+
+| Script | Responsabilidade |
+| --- | --- |
+| `lib.sh` | funções compartilhadas (não executar diretamente) |
+| `env-init.sh` | cria `.env` com segredos aleatórios (permissão 600); nunca sobrescreve; avisa sobre variáveis novas no `.env.example` |
+| `check-prereqs.sh` | docker/compose/daemon, Go ≥ 1.27, Node ≥ 22.12, curl, openssl, ss |
+| `services-up.sh` | `docker compose up -d --wait` (timeout 180 s) |
+| `models.sh` | `ollama pull` apenas dos modelos ausentes (`SKIP_MODELS=1` pula) |
+| `frontend-deps.sh` | `npm ci` se `node_modules` não existe ou é mais antigo que o `package-lock.json` |
+| `db-init.sh` | compila `bin/seed` e aplica migrações + seed (`--migrate-only` aceito) |
+| `dev.sh` | orquestra tudo e executa API + Vite em sessões próprias, com logs prefixados |
+| `stop-apps.sh` | encerra o processo que estiver nas portas da API e do frontend |
+| `reset-db.sh` | remove o volume `neo4j_data` e refaz serviços + seed (`FORCE=1` sem confirmação) |
+
+Comportamento do `dev.sh` ao encerrar:
+
+- `Ctrl+C`: envia SIGTERM aos grupos de processo da API e do Vite, espera terminarem e sai com 0.
+- Uma das aplicações cai: a outra é encerrada e o comando sai com erro (falha não fica escondida).
+- Terminal fechado (SIGHUP) ou `kill`: mesma limpeza.
+- Contêineres não são parados; use `make stop`.
 
 ## Comandos
 
-| Objetivo | Comando | Diretório |
+| Objetivo | Make | Manual (diretório) |
 | --- | --- | --- |
-| Migrações + seed | `go run ./cmd/seed` | `backend` |
-| Só migrações | `go run ./cmd/seed --migrate-only` | `backend` |
-| Build da API | `go build -o bin/api ./cmd/api` | `backend` |
-| Testes unitários Go | `go test ./...` | `backend` |
-| Testes de integração Go | `go test -tags integration -count=1 ./internal/integration/` (com `.env` carregado e Neo4j no ar) | `backend` |
-| Lint Go | `gofmt -l . && go vet ./... && go vet -tags integration ./...` | `backend` |
-| Testes frontend | `npm test` | `frontend` |
-| Typecheck frontend | `npm run typecheck` | `frontend` |
-| Build frontend | `npm run build` | `frontend` |
-| Shell Cypher | `docker compose exec neo4j cypher-shell -u neo4j -p "$NEO4J_PASSWORD"` | raiz |
-| Modelos Ollama | `docker compose exec ollama ollama list` | raiz |
+| Tudo | `make dev` | ver README, seção "Execução manual" |
+| Migrações + seed | `make seed` | `go run ./cmd/seed` (`backend`) |
+| Só migrações | `make migrate` | `go run ./cmd/seed --migrate-only` (`backend`) |
+| Apagar e recriar dados | `make reset-db` | `docker compose down -v` (apaga também modelos) |
+| Testes unitários | `make test` | `go test ./...` (`backend`), `npm test` (`frontend`) |
+| Testes de integração | `make test-integration` | `go test -tags integration -count=1 ./internal/integration/` com `.env` carregado (`backend`) |
+| Lint | `make lint` | `gofmt -l . && go vet ./...` (`backend`), `npm run typecheck` (`frontend`) |
+| Build | `make build` | `go build -o bin/ ./cmd/...`, `npm run build` |
+| Estado | `make status` | `docker compose ps`, `curl localhost:8080/api/health` |
+| Shell Cypher | — | `docker compose exec neo4j cypher-shell -u neo4j -p "$NEO4J_PASSWORD"` |
+| Modelos | `make models` | `docker compose exec ollama ollama list` |
 
 ## Testes
 
@@ -86,7 +102,8 @@ banco de usuário). Como só executam o seed idempotente e leituras, não altera
 
 | Sintoma | Causa provável | Solução |
 | --- | --- | --- |
-| API não inicia: `NEO4J_PASSWORD is required` | `.env` não carregado no shell | `set -a; source ../.env; set +a` |
+| `port 8080 is already in use` ao rodar `make dev` | API/Vite de outro terminal ainda rodando | `make stop-apps` |
+| API não inicia: `NEO4J_PASSWORD is required` | execução manual sem carregar o `.env` | use `make dev` ou `set -a; source ../.env; set +a` |
 | API não inicia: `ADMIN_TOKEN must have at least 16 characters` | seed admin habilitado sem token | gere um token ou `ADMIN_SEED_ENABLED=false` |
 | `/api/health` 503, `neo4j is unreachable` | contêiner parado ou ainda subindo | `docker compose up -d --wait neo4j` |
 | `Neo.ClientError.Security.Unauthorized` no log | senha do `.env` diferente da usada ao criar o volume | volte a senha ou `docker compose down -v` (apaga dados) |

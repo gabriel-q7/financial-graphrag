@@ -69,7 +69,7 @@ func Load(getenv func(string) string) (Config, error) {
 		Neo4jPassword:     getenv("NEO4J_PASSWORD"),
 		Neo4jDatabase:     get("NEO4J_DATABASE", "neo4j"),
 		OllamaURL:         strings.TrimRight(get("OLLAMA_URL", "http://localhost:11434"), "/"),
-		OllamaChatModel:   get("OLLAMA_CHAT_MODEL", "llama3.2:3b"),
+		OllamaChatModel:   get("OLLAMA_CHAT_MODEL", "qwen3:4b-instruct"),
 		OllamaEmbedModel:  get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
 		MigrationsDir:     get("MIGRATIONS_DIR", "../neo4j/migrations"),
 		SeedFile:          get("SEED_FILE", "../data/seed/financial_network.json"),

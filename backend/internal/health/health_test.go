@@ -21,7 +21,7 @@ type fakeOllama struct {
 
 func (f fakeOllama) Version(context.Context) (string, error)  { return "0.34.4", f.versionErr }
 func (f fakeOllama) Models(context.Context) ([]string, error) { return f.models, nil }
-func (f fakeOllama) ChatModel() string                        { return "llama3.2:3b" }
+func (f fakeOllama) ChatModel() string                        { return "qwen3:4b-instruct" }
 func (f fakeOllama) EmbedModel() string                       { return "nomic-embed-text" }
 
 func checker(neoErr error, o fakeOllama) *Checker {
@@ -29,7 +29,7 @@ func checker(neoErr error, o fakeOllama) *Checker {
 }
 
 func TestHealthStatuses(t *testing.T) {
-	allModels := []string{"llama3.2:3b", "nomic-embed-text:latest"}
+	allModels := []string{"qwen3:4b-instruct", "nomic-embed-text:latest"}
 	cases := []struct {
 		name   string
 		neoErr error

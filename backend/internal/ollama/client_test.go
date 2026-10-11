@@ -15,7 +15,7 @@ func TestClientAgainstFakeServer(t *testing.T) {
 		case "/api/version":
 			_, _ = w.Write([]byte(`{"version":"0.34.4"}`))
 		case "/api/tags":
-			_, _ = w.Write([]byte(`{"models":[{"name":"nomic-embed-text:latest"},{"name":"llama3.2:3b"}]}`))
+			_, _ = w.Write([]byte(`{"models":[{"name":"nomic-embed-text:latest"},{"name":"qwen3:4b-instruct"}]}`))
 		case "/api/embed":
 			var body struct {
 				Model string   `json:"model"`
@@ -33,7 +33,7 @@ func TestClientAgainstFakeServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL+"/", "llama3.2:3b", "nomic-embed-text", nil)
+	c := New(srv.URL+"/", "qwen3:4b-instruct", "nomic-embed-text", nil)
 	ctx := context.Background()
 
 	v, err := c.Version(ctx)
@@ -44,7 +44,7 @@ func TestClientAgainstFakeServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasModel(models, "nomic-embed-text") || !HasModel(models, "llama3.2:3b") || HasModel(models, "mistral") {
+	if !HasModel(models, "nomic-embed-text") || !HasModel(models, "qwen3:4b-instruct") || HasModel(models, "mistral") {
 		t.Fatalf("HasModel mismatch for %v", models)
 	}
 	emb, err := c.Embed(ctx, []string{"a", "b"})

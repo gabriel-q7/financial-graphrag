@@ -74,7 +74,7 @@ financial-graphrag/
 | Node.js        | 22.12+ (testado com 22.21)      |
 
 Recursos: o Neo4j usa ~1,5 GB de RAM (heap 1 GB + page cache 512 MB). O modelo de chat
-`llama3.2:3b` requer ~2 GB de disco e ~4 GB de RAM; `nomic-embed-text` ~270 MB.
+`qwen3:4b-instruct` requer ~2,5 GB de disco e ~3,2 GB de RAM; `nomic-embed-text` ~270 MB.
 
 ## 1. Configurar variáveis de ambiente
 
@@ -123,9 +123,29 @@ Baixe-os manualmente; eles ficam persistidos no volume `ollama_models`:
 
 ```bash
 docker compose exec ollama ollama pull nomic-embed-text
-docker compose exec ollama ollama pull llama3.2:3b
+docker compose exec ollama ollama pull qwen3:4b-instruct
 docker compose exec ollama ollama list
 ```
+
+#### Modelo de chat: `qwen3:4b-instruct`
+
+Escolhido para rodar só em CPU num notebook Ryzen 5 (Zen 2, 6 núcleos, AVX2; a iGPU Radeon
+não é usada pelo Ollama). É o Qwen3-4B-Instruct-2507, Q4_K_M. Medido nesta máquina
+(Ollama 0.34.4, `num_ctx` 4096, temperatura 0):
+
+| Tarefa | Prompt | Geração | Tempo total | RAM |
+| --- | --- | --- | --- | --- |
+| Extração de entidades com JSON schema | 116 tokens | ~7 tok/s | ~45 s | 3,2 GB |
+| Resposta fundamentada (PT-BR, cita ids) | 457 tokens | ~7 tok/s | ~45 s | 3,2 GB |
+
+Primeira chamada após carregar o modelo: +6 a 12 s. Para uso futuro:
+
+- **Não use a tag `qwen3:4b`**: ela aponta para a variante *Thinking-2507*, que sempre
+  raciocina (o `think: false` é ignorado), gera centenas de tokens antes da resposta e
+  passou de 8 minutos sem limite de tokens neste notebook.
+- Sempre defina `num_predict` nas chamadas de geração para limitar tempo de resposta.
+- Em 4B, a extração de relacionamentos inventa tipos e inverte direções: os resultados
+  precisam ser validados contra o schema (`graph.RelSpecs`) antes de gravar no grafo.
 
 Enquanto os modelos não estiverem disponíveis, `/api/health` reporta o Ollama como
 `degraded` (a exploração do grafo funciona normalmente). O Ollama roda em CPU por padrão;

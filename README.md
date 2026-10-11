@@ -12,6 +12,11 @@ e preparar uma arquitetura **GraphRAG** (recuperação vetorial + travessia de g
 > dispositivo compartilhado, depósitos fracionados) são sinais para investigação, **não**
 > conclusões de fraude.
 
+## Documentação
+
+Documentação técnica detalhada em [`Docs/`](Docs/README.md): arquitetura, API, modelo de dados,
+frontend, IA local, roadmap GraphRAG, segurança e guia de desenvolvimento.
+
 ## Arquitetura
 
 ```mermaid

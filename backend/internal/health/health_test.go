@@ -22,14 +22,14 @@ type fakeOllama struct {
 func (f fakeOllama) Version(context.Context) (string, error)  { return "0.34.4", f.versionErr }
 func (f fakeOllama) Models(context.Context) ([]string, error) { return f.models, nil }
 func (f fakeOllama) ChatModel() string                        { return "qwen3:4b-instruct" }
-func (f fakeOllama) EmbedModel() string                       { return "nomic-embed-text" }
+func (f fakeOllama) EmbedModel() string                       { return "embeddinggemma:300m" }
 
 func checker(neoErr error, o fakeOllama) *Checker {
 	return &Checker{Neo4j: fakePinger{neoErr}, Ollama: o, Timeout: time.Second, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func TestHealthStatuses(t *testing.T) {
-	allModels := []string{"qwen3:4b-instruct", "nomic-embed-text:latest"}
+	allModels := []string{"qwen3:4b-instruct", "embeddinggemma:300m"}
 	cases := []struct {
 		name   string
 		neoErr error

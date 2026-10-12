@@ -9,13 +9,14 @@ flowchart LR
   end
   subgraph API["Go API :8080 (net/http)"]
     MW["middleware<br/>recover · logging · headers · CORS · body limit"]
-    HD["handlers<br/>health · meta · graph · admin"]
+    HD["handlers<br/>health · meta · graph · ask (SSE) · admin"]
     GR["graph<br/>modelo · validação · DTOs · repositório"]
     DB["database<br/>driver · migrações"]
     SD["seed<br/>validação · MERGE"]
-    OC["ollama<br/>cliente HTTP"]
+    OC["ollama<br/>metadados (health)"]
     HC["health<br/>checker"]
-    RG["rag<br/>interfaces (etapa 2)"]
+    RG["rag<br/>recuperação · contexto · citações · indexador"]
+    LM["llm<br/>langchaingo: chat + embeddings"]
   end
   subgraph Compose["docker compose — 127.0.0.1"]
     NEO[("Neo4j Community<br/>2026.08.1")]
@@ -27,8 +28,10 @@ flowchart LR
   HC --> OC -->|HTTP| OLL
   HD --> DB --> NEO
   DB --> SD
-  RG -.-> OC
-  RG -.-> GR
+  HD --> RG
+  RG --> GR
+  RG -->|índice vetorial| NEO
+  RG --> LM -->|HTTP| OLL
 ```
 
 | Pacote | Responsabilidade | Depende de |
@@ -40,9 +43,10 @@ flowchart LR
 | `internal/graph` | Tipos de nó/relacionamento, validação de ids e parâmetros, DTOs, repositório | driver Neo4j |
 | `internal/seed` | Lê o JSON do dataset, valida, grava com `MERGE` em uma transação | `graph` |
 | `internal/health` | Checa Neo4j (essencial) e Ollama (opcional) em paralelo, com timeout | `ollama` |
-| `internal/ollama` | Cliente da API do Ollama: versão, modelos, embeddings | — |
-| `internal/http` | Router (`routes.go`), `handlers/`, `middleware/` | `graph`, `health`, `seed` |
-| `internal/rag` | Interfaces do pipeline GraphRAG; só contratos | `graph`, `ollama` |
+| `internal/ollama` | Metadados do Ollama: versão e modelos instalados (health) | — |
+| `internal/llm` | Adaptadores langchaingo: `Generator` (chat em streaming) e `Embedder` | `rag` (interfaces), langchaingo |
+| `internal/rag` | Pipeline GraphRAG: entidades da pergunta, busca vetorial, expansão, contexto, citações, indexador de embeddings | `graph`, driver Neo4j |
+| `internal/http` | Router (`routes.go`), `handlers/` (inclui `ask.go`, SSE), `middleware/` | `graph`, `health`, `rag` |
 
 As dependências só apontam "para dentro": `http` conhece `graph`, mas `graph` não conhece HTTP.
 Handlers dependem de interfaces (`graph.Reader`, `handlers.HealthRunner`, `handlers.SeedFunc`),
@@ -74,6 +78,58 @@ sequenceDiagram
   R-->>H: Subgraph (nós, arestas, meta.truncated)
   H-->>UI: 200 JSON
 ```
+
+## Fluxo de uma pergunta (`POST /api/ask`)
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend (AskPanel)
+  participant H as handlers.Ask
+  participant S as rag.Service
+  participant E as llm.Embedder
+  participant N as Neo4j
+  participant G as llm.Generator
+  UI->>H: POST {"question"}
+  H->>H: valida, reserva a vaga única (429 se ocupada)
+  H->>S: Retrieve
+  S->>E: embed("task: search result | query: " + pergunta)
+  S->>N: busca vetorial (document_embedding, k=4)
+  S->>N: nomes de pessoas/empresas → MatchEntities
+  alt nenhuma entidade e nenhum documento ≥ limiar
+    S-->>H: noEvidence
+    H-->>UI: retrieval + token(resposta fixa) + done
+  else há evidência
+    S->>N: vizinhança 1 nível das sementes + trilhas de dinheiro (3 níveis)
+    S->>S: ranqueia por distância, mantém 30 nós, monta contexto com ids
+    H-->>UI: event retrieval (evidências)
+    H-->>UI: event status generating
+    H->>S: Generate
+    S->>G: system + evidências + pergunta (stream)
+    loop cada fragmento
+      G-->>H: token
+      H-->>UI: event token
+    end
+    S->>S: ExtractCitations (ids válidos × inválidos)
+    H-->>UI: event done (resposta, citações, tempos)
+  end
+```
+
+Etapas da recuperação (`rag.Service.Retrieve`):
+
+1. **Sementes**: documentos com score ≥ 0,66 e a até 0,05 do melhor; entidades citadas na
+   pergunta por id (`acc_007`) ou nome (nome completo, primeiro ou último nome distintivo,
+   sem acentos/maiúsculas).
+2. **Expansão**: vizinhança de 1 nível de cada semente; para as entidades citadas e as
+   mencionadas pelos documentos, vizinhança de 1 nível e trilha de dinheiro de 3 níveis
+   (`OWNS`, `SENT`, `TO_ACCOUNT`). Tudo via `graph.Reader.Neighborhood` (mesmos limites da API).
+3. **Ranqueamento**: BFS a partir das sementes; mantém os 30 nós mais próximos e as arestas
+   entre eles; até 2 documentos alcançados pelo grafo entram como trecho.
+4. **Contexto** (`BuildContext`): linhas curtas sempre com ids — entidades, relações,
+   transferências `[txn] [conta origem] (de dono) -> [conta destino] (de dono): valor…`
+   e documentos entre `<<< >>>`.
+5. **Geração**: prompt de sistema com regras de citação e linguagem neutra; temperatura 0;
+   até 450 tokens.
+6. **Validação**: ids citados que não estão no contexto são marcados como inválidos.
 
 ### Travessia limitada (BFS por camadas)
 
@@ -110,8 +166,8 @@ grafo respondem `503 graph_unavailable`. Quando o Neo4j volta, a API se recupera
 | Ollama inacessível | não | `degraded` | 200 |
 | Ollama sem os modelos configurados | não | `degraded` | 200 |
 
-O Ollama é opcional nesta etapa porque nenhuma rota depende dele. Quando houver endpoint de
-perguntas, ele deverá responder `503` próprio se o Ollama estiver fora, sem derrubar a exploração.
+O Ollama não é essencial para a exploração do grafo. Sem ele, `POST /api/ask` responde
+`503 model_unavailable` e o resto da aplicação segue funcionando.
 
 ## Decisões
 
@@ -125,8 +181,13 @@ perguntas, ele deverá responder `503` próprio se o Ollama estiver fora, sem de
 | Id de aresta determinístico `origem:TIPO:destino` | Frontend deduplica sem conhecer ids internos do Neo4j | `elementId(r)` |
 | Seed em JSON validado + consultas fixas por tipo | Rótulos e tipos não vêm do arquivo; valores sempre como parâmetros | Script Cypher livre |
 | API sobe mesmo sem Neo4j | Health distingue API viva de dependência fora | Falhar no start |
-| Sem endpoint de chat | Não simular GraphRAG sem recuperação real | Chat direto com a LLM |
-| Índice vetorial adiado | Dimensão depende do modelo de embeddings escolhido | Criar com dimensão arbitrária |
+| langchaingo só na camada de modelos | Portabilidade de provedor sem prender o pipeline a abstrações que não cobrem grafo | Chains `RetrievalQA` (só vetorial); cliente HTTP próprio (sem portabilidade) |
+| Índice vetorial nativo do Neo4j | Vetores e grafo no mesmo banco; uma consulta junta similaridade e travessia | Vector store externo (langchaingo não tem store Neo4j) |
+| Recuperação híbrida (vetor + nomes/ids + trilhas de dinheiro) | Perguntas citam entidades e padrões; só vetor perde a estrutura | RAG só vetorial |
+| Sem evidência → resposta fixa sem LLM | Evita alucinação e responde em < 1 s | Deixar o modelo responder |
+| SSE sobre `POST` | Streaming simples, sem WebSocket; cancelamento fecha a conexão | WebSocket; polling |
+| Uma pergunta por vez | Geração ocupa a CPU; concorrência só pioraria a latência de todos | Fila |
+| Embeddings com hash (modelo + texto) | Reindexação idempotente e automática quando texto ou modelo mudam | Recalcular sempre |
 | Ollama via Docker, modelos baixados manualmente | Reprodutível, sem downloads de GB a cada `up` | Pull automático no entrypoint |
 
 ## Configuração
@@ -143,6 +204,9 @@ Timeouts fixos no código:
 | Retry de transação do driver | 3 s |
 | Conexão/aquisição de conexão Neo4j | 5 s |
 | Cada checagem de saúde | 3 s |
+| Pergunta (`/api/ask`), total | 5 min (prazo de escrita estendido no stream) |
+| Heartbeat SSE | 10 s |
 | Seed via API | 60 s |
 | Servidor: header / leitura / escrita / idle | 5 / 10 / 90 / 60 s |
-| Cliente HTTP do Ollama | 60 s |
+| Cliente HTTP de metadados do Ollama | 30 s |
+| Chat/embeddings (langchaingo) | sem timeout global; 3 min até os cabeçalhos; limitado pelo contexto da requisição |

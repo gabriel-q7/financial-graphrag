@@ -15,16 +15,16 @@ interface Props {
 export function DetailsPanel({ entity, expanded, isRoot, connections, expanding, onExpand, onRecenter, onSelect }: Props) {
   if (!entity) {
     return (
-      <aside className="details" aria-label="Detalhes">
+      <div className="details-body">
         <p className="details-empty">Selecione um nó para ver propriedades, conexões e ações.</p>
-      </aside>
+      </div>
     );
   }
   const style = NODE_STYLE[entity.type];
   const keys = Object.keys(entity.properties);
 
   return (
-    <aside className="details" aria-label="Detalhes da entidade">
+    <div className="details-body">
       <header className="details-header" style={{ borderColor: style.color }}>
         <span className="details-type" style={{ color: style.color }}>
           {style.label}
@@ -80,6 +80,6 @@ export function DetailsPanel({ entity, expanded, isRoot, connections, expanding,
         )}
         {!expanded && connections.length > 0 && <p className="hint">Pode haver conexões ainda não carregadas.</p>}
       </section>
-    </aside>
+    </div>
   );
 }

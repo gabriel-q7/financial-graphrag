@@ -4,8 +4,10 @@ import { DetailsPanel } from '../../components/DetailsPanel';
 import { HealthBadge } from '../../components/HealthBadge';
 import { Sidebar, type ExpansionOptions } from '../../components/Sidebar';
 import { StateMessage } from '../../components/StateMessage';
+import { AskPanel } from '../ask/AskPanel';
 import { ApiError, api } from '../../lib/api';
-import { REL_TYPES, type ApiMeta, type HealthReport, type NodeType, type RelType } from '../../types/graph';
+import type { Retrieval } from '../../types/ask';
+import { REL_TYPES, type ApiMeta, type HealthReport, type NodeType, type RelType, type Subgraph } from '../../types/graph';
 import { GraphCanvas } from './GraphCanvas';
 import { applyFilters, mergeSubgraph, type EntityFlowNode, type RelFlowEdge } from './graphModel';
 
@@ -28,6 +30,19 @@ function errorMessage(err: unknown): string {
     return known ?? err.message;
   }
   return 'Erro inesperado.';
+}
+
+/** Builds a Subgraph from the evidence of an answer so it can be merged into the canvas. */
+function evidenceSubgraph(r: Retrieval, anchorId: string): Subgraph | null {
+  const nodes = [...r.nodes, ...r.documents.map((d) => d.node)];
+  const center = nodes.find((n) => n.id === anchorId);
+  if (!center) return null;
+  return {
+    center,
+    nodes,
+    edges: r.edges,
+    meta: { depth: 0, nodeLimit: nodes.length, edgeLimit: r.edges.length, relationshipTypes: [], nodeCount: nodes.length, edgeCount: r.edges.length, truncated: false },
+  };
 }
 
 function toggle<T>(set: ReadonlySet<T>, v: T): Set<T> {
@@ -53,6 +68,8 @@ export function GraphExplorer() {
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<ReadonlySet<NodeType>>(new Set());
   const [hiddenRelTypes, setHiddenRelTypes] = useState<ReadonlySet<RelType>>(new Set());
   const [options, setOptions] = useState<ExpansionOptions>({ depth: 1, limit: 25 });
+  const [rightTab, setRightTab] = useState<'ask' | 'details'>('ask');
+  const [citedIds, setCitedIds] = useState<ReadonlySet<string>>(new Set());
 
   const { fitView, setCenter, getNode } = useReactFlow<EntityFlowNode, RelFlowEdge>();
   const requestRef = useRef<AbortController | null>(null);
@@ -182,10 +199,14 @@ export function GraphExplorer() {
   );
 
   // --- Derived view state ---------------------------------------------------
-  const view = useMemo(
-    () => applyFilters(nodes, edges, hiddenNodeTypes, hiddenRelTypes),
-    [nodes, edges, hiddenNodeTypes, hiddenRelTypes],
-  );
+  const view = useMemo(() => {
+    const filtered = applyFilters(nodes, edges, hiddenNodeTypes, hiddenRelTypes);
+    if (citedIds.size === 0) return filtered;
+    return {
+      ...filtered,
+      nodes: filtered.nodes.map((n) => (citedIds.has(n.id) ? { ...n, className: 'is-cited' } : n)),
+    };
+  }, [nodes, edges, hiddenNodeTypes, hiddenRelTypes, citedIds]);
 
   const stats = useMemo(
     () => ({
@@ -230,6 +251,37 @@ export function GraphExplorer() {
       }
     },
     [getNode, setCenter, setNodes],
+  );
+
+  // --- Evidence from answers -------------------------------------------------
+  const showEvidence = useCallback(
+    (r: Retrieval, cited: string[], focusId?: string) => {
+      const anchor = focusId ?? cited[0] ?? r.entities[0]?.id ?? r.documents[0]?.node.id;
+      const sub = anchor ? evidenceSubgraph(r, anchor) : null;
+      if (!sub) return;
+      requestRef.current?.abort();
+      const merged = mergeSubgraph([], [], sub, sub.center.id);
+      setNodes(merged.nodes.map((n) => ({ ...n, selected: n.id === sub.center.id })));
+      setEdges(merged.edges);
+      setSelectedId(sub.center.id);
+      setCitedIds(new Set(cited));
+      setGraphState({ status: 'ready' });
+      setNotice(`Exibindo as evidências da resposta: ${merged.nodes.length} nós, ${merged.edges.length} relacionamentos.`);
+      pendingFit.current = null;
+    },
+    [setEdges, setNodes],
+  );
+
+  const focusCitation = useCallback(
+    (id: string, r: Retrieval) => {
+      if (graphRef.current.nodes.some((n) => n.id === id)) {
+        select(id);
+        return;
+      }
+      // Not on the canvas yet: show the evidence graph centered on the cited entity.
+      showEvidence(r, [...citedIds, id], id);
+    },
+    [citedIds, select, showEvidence],
   );
 
   // --- Render ---------------------------------------------------------------
@@ -290,7 +342,10 @@ export function GraphExplorer() {
               edges={view.edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onSelect={select}
+              onSelect={(id) => {
+                select(id);
+                if (id) setRightTab('details');
+              }}
               onExpand={expand}
               onCenter={fitAll}
               stats={stats}
@@ -309,16 +364,36 @@ export function GraphExplorer() {
         )}
       </main>
 
-      <DetailsPanel
-        entity={selected?.data.entity ?? null}
-        expanded={selected?.data.expanded ?? false}
-        isRoot={selected?.data.isRoot ?? false}
-        connections={connections}
-        expanding={expandingId !== null}
-        onExpand={() => selected && expand(selected.id)}
-        onRecenter={() => selected && loadRoot(selected.id, options.limit)}
-        onSelect={select}
-      />
+      <aside className="details" aria-label="Painel lateral">
+        <div className="tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={rightTab === 'ask'} className={rightTab === 'ask' ? 'active' : ''} onClick={() => setRightTab('ask')}>
+            Perguntar à IA
+          </button>
+          <button type="button" role="tab" aria-selected={rightTab === 'details'} className={rightTab === 'details' ? 'active' : ''} onClick={() => setRightTab('details')}>
+            Detalhes
+          </button>
+        </div>
+        <div role="tabpanel" hidden={rightTab !== 'ask'}>
+          <AskPanel
+            aiAvailable={health?.checks.ollama?.status === 'ok'}
+            onCitation={focusCitation}
+            onShowEvidence={(r, cited) => showEvidence(r, cited)}
+            onCited={(ids) => setCitedIds(new Set(ids))}
+          />
+        </div>
+        <div role="tabpanel" hidden={rightTab !== 'details'}>
+        <DetailsPanel
+          entity={selected?.data.entity ?? null}
+          expanded={selected?.data.expanded ?? false}
+          isRoot={selected?.data.isRoot ?? false}
+          connections={connections}
+          expanding={expandingId !== null}
+          onExpand={() => selected && expand(selected.id)}
+          onRecenter={() => selected && loadRoot(selected.id, options.limit)}
+          onSelect={select}
+        />
+        </div>
+      </aside>
     </div>
   );
 }

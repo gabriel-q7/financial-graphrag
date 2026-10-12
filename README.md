@@ -1,11 +1,13 @@
 # Financial GraphRAG
 
-Fundação de uma aplicação full-stack para explorar um **Knowledge Graph financeiro sintético**
-e preparar uma arquitetura **GraphRAG** (recuperação vetorial + travessia de grafo + LLM local).
+Aplicação full-stack para explorar um **Knowledge Graph financeiro sintético** e fazer
+**perguntas em linguagem natural** respondidas com **GraphRAG**: busca vetorial nos documentos,
+travessia do grafo a partir das entidades encontradas e resposta de uma LLM local que cita
+os ids das evidências.
 
-- **Backend:** Go 1.27 (`net/http`), driver oficial Neo4j v6
-- **Banco de grafos:** Neo4j Community `2026.08.1`
-- **IA local:** Ollama `0.34.4` (modelo de chat e de embeddings configurados separadamente)
+- **Backend:** Go 1.27 (`net/http`), driver oficial Neo4j v6, [langchaingo](https://github.com/tmc/langchaingo) v0.1.14 para os modelos
+- **Banco de grafos:** Neo4j Community `2026.08.1` (grafo + índice vetorial)
+- **IA local:** Ollama `0.34.4` — chat `qwen3:4b-instruct`, embeddings `embeddinggemma:300m`
 - **Frontend:** React 19 + Vite 8 + TypeScript strict + React Flow (`@xyflow/react` 12)
 
 > Todos os dados são **fictícios**. Os padrões incluídos no seed (transferências em cadeia,
@@ -26,22 +28,25 @@ flowchart LR
   end
   subgraph Backend["Go API (:8080)"]
     R["http/routes<br/>CORS · logging · recover"]
-    H["handlers<br/>health · graph · admin"]
+    H["handlers<br/>health · graph · ask (SSE) · admin"]
     G["graph<br/>validação · DTOs · repositório"]
     S["seed + database<br/>migrações · MERGE idempotente"]
-    O["ollama client<br/>health · embed"]
-    RAG["rag<br/>interfaces da próxima etapa"]
+    RAG["rag<br/>busca vetorial · entidades · expansão<br/>contexto · citações · indexador"]
+    L["llm (langchaingo)<br/>chat em streaming · embeddings"]
+    O["ollama client<br/>health"]
   end
   subgraph Docker["docker compose (127.0.0.1)"]
     N[("Neo4j :7687")]
     OL["Ollama :11434"]
   end
-  UI -- "JSON / REST" --> R --> H
+  UI -- "JSON / REST · SSE" --> R --> H
   H --> G -- "Cypher parametrizado (Bolt)" --> N
   H --> S --> N
+  H --> RAG
+  RAG --> G
+  RAG -- "índice vetorial" --> N
+  RAG --> L -- HTTP --> OL
   H --> O -- HTTP --> OL
-  RAG -. "futuro" .-> O
-  RAG -. "futuro" .-> G
 ```
 
 ```text
@@ -80,7 +85,7 @@ financial-graphrag/
 | GNU Make, Bash, curl, openssl, ss (iproute2) | padrão em distribuições Linux |
 
 Recursos: o Neo4j usa ~1,5 GB de RAM (heap 1 GB + page cache 512 MB). O modelo de chat
-`qwen3:4b-instruct` requer ~2,5 GB de disco e ~3,2 GB de RAM; `nomic-embed-text` ~270 MB.
+`qwen3:4b-instruct` requer ~2,5 GB de disco e ~3,2 GB de RAM; `embeddinggemma:300m` ~620 MB.
 
 ## Início rápido
 
@@ -144,7 +149,7 @@ frontend (o Vite lê apenas as variáveis `VITE_*`, via `envDir: '..'`).
 | `CORS_ALLOWED_ORIGIN` | Única origem aceita pelo CORS (padrão `http://localhost:5173`). |
 | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` | Conexão Bolt. A senha também inicializa o contêiner. |
 | `OLLAMA_URL`, `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL` | Ollama e modelos (chat e embeddings separados). |
-| `OLLAMA_EMBED_DIMENSIONS` | Dimensão do modelo de embeddings (`nomic-embed-text` = 768). Só será usada ao criar o índice vetorial. |
+| `OLLAMA_EMBED_DIMENSIONS` | Dimensão do modelo de embeddings (`embeddinggemma:300m` = 768); precisa bater com o índice vetorial da migração 002. |
 | `MIGRATIONS_DIR`, `SEED_FILE` | Caminhos relativos a `backend/`. |
 | `ADMIN_SEED_ENABLED`, `ADMIN_TOKEN` | Habilitam `POST /api/admin/seed` (token ≥ 16 caracteres). |
 | `VITE_API_BASE_URL`, `VITE_DEFAULT_ENTITY_ID` | URL da API e entidade inicial do frontend. |
@@ -171,8 +176,8 @@ Os modelos **não** são baixados automaticamente na inicialização dos contêi
 Baixe-os manualmente; eles ficam persistidos no volume `ollama_models`:
 
 ```bash
-docker compose exec ollama ollama pull nomic-embed-text
 docker compose exec ollama ollama pull qwen3:4b-instruct
+docker compose exec ollama ollama pull embeddinggemma:300m
 docker compose exec ollama ollama list
 ```
 
@@ -187,7 +192,9 @@ não é usada pelo Ollama). É o Qwen3-4B-Instruct-2507, Q4_K_M. Medido nesta m�
 | Extração de entidades com JSON schema | 116 tokens | ~7 tok/s | ~45 s | 3,2 GB |
 | Resposta fundamentada (PT-BR, cita ids) | 457 tokens | ~7 tok/s | ~45 s | 3,2 GB |
 
-Primeira chamada após carregar o modelo: +6 a 12 s. Para uso futuro:
+Primeira chamada após carregar o modelo: +6 a 12 s. Perguntas reais pela aplicação levam
+**~40–100 s** (≈ 30–55 s lendo as evidências, ≈ 5 tok/s gerando) — detalhes em
+[Docs/ai-models.md](Docs/ai-models.md). Cuidados:
 
 - **Não use a tag `qwen3:4b`**: ela aponta para a variante *Thinking-2507*, que sempre
   raciocina (o `think: false` é ignorado), gera centenas de tokens antes da resposta e
@@ -195,6 +202,12 @@ Primeira chamada após carregar o modelo: +6 a 12 s. Para uso futuro:
 - Sempre defina `num_predict` nas chamadas de geração para limitar tempo de resposta.
 - Em 4B, a extração de relacionamentos inventa tipos e inverte direções: os resultados
   precisam ser validados contra o schema (`graph.RelSpecs`) antes de gravar no grafo.
+
+#### Modelo de embeddings: `embeddinggemma:300m`
+
+768 dimensões (mesma do índice vetorial), multilíngue, ~175 ms por pergunta. Escolhido após
+comparar com `nomic-embed-text` (que deu 0,84 de similaridade para "capital da França" — mais
+que perguntas relevantes) e `qwen3-embedding:0.6b`.
 
 Enquanto os modelos não estiverem disponíveis, `/api/health` reporta o Ollama como
 `degraded` (a exploração do grafo funciona normalmente). O Ollama roda em CPU por padrão;
@@ -253,6 +266,15 @@ com `CORS_ALLOWED_ORIGIN`).
 - **Centralizar**, zoom, minimapa e arrastar nós estão disponíveis no canvas.
 - Nós com ponto inferior ainda não foram expandidos; `!` marca conta com status `under_review`.
 
+- **Perguntar à IA** (aba do painel direito): escreva uma pergunta ou use um exemplo. A
+  resposta aparece enquanto é gerada; os ids citados viram botões que levam ao nó no grafo,
+  os nós citados ficam destacados em âmbar e **Ver evidências no grafo** mostra exatamente o
+  subgrafo usado. Ids citados que não estavam nas evidências aparecem riscados em vermelho.
+  Uma pergunta por vez (o modelo ocupa a CPU).
+
+Perguntas de exemplo: "Por que a conta da Ana Ribeiro merece revisão?", "Quais pessoas
+compartilham o mesmo dispositivo?", "Para onde foi o dinheiro que a conta acc_007 recebeu?".
+
 Sugestões de exploração: `acc_001` com profundidade 3 e apenas `SENT`/`TO_ACCOUNT`
 (cadeia de transferências e retorno circular); `dev_003` (dispositivo compartilhado);
 `acc_007` (depósitos fracionados seguidos de saída).
@@ -264,12 +286,13 @@ detalhes internos (credenciais, stack traces ou mensagens do driver ficam só no
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
-| GET | `/api/health` | Estado da API e das dependências. `200` com `ok`/`degraded`; `503` se o Neo4j (essencial) estiver indisponível. Ollama é opcional nesta etapa. |
+| GET | `/api/health` | Estado da API e das dependências. `200` com `ok`/`degraded`; `503` se o Neo4j (essencial) estiver indisponível. Sem Ollama, a exploração funciona e só as perguntas falham. |
+| POST | `/api/ask` | Pergunta em linguagem natural; resposta em **Server-Sent Events** (`retrieval`, `status`, `token`, `done`, `error`). Uma por vez (`429` se ocupado). Ver [Docs/api.md](Docs/api.md#post-apiask). |
 | GET | `/api/meta` | Tipos de nó e relacionamento, propriedades expostas e limites do servidor. |
 | GET | `/api/entities?q=&type=&limit=` | Busca por id ou nome (`limit` ≤ 50). |
 | GET | `/api/graph/{id}?limit=` | Entidade e conexões diretas (profundidade 1). |
 | GET | `/api/graph/{id}/neighbors?depth=&limit=&relationshipTypes=` | Vizinhança com travessia limitada. |
-| POST | `/api/admin/seed` | Migrações + seed. Apenas com `ADMIN_SEED_ENABLED=true`, `APP_ENV≠production`, header `X-Admin-Token` e cliente loopback. |
+| POST | `/api/admin/seed` | Migrações + seed + embeddings. Apenas com `ADMIN_SEED_ENABLED=true`, `APP_ENV≠production`, header `X-Admin-Token` e cliente loopback. |
 
 Limites de `/neighbors` (impostos no servidor; valores fora da faixa retornam `400`):
 
@@ -385,18 +408,21 @@ Os testes de integração usam o banco `neo4j` de desenvolvimento (o Community E
 - Se o Neo4j estiver fora do ar quando a API inicia, as migrações são aplicadas no próximo
   seed (a API continua respondendo e reporta `503` em `/api/health`).
 - O layout dos nós expandidos é radial e simples; nós podem ser reposicionados manualmente.
-- Não há endpoint de chat: ele só será criado quando a recuperação real existir.
+- Respostas levam ~40–100 s em CPU e o modelo de 4B pode errar relações mesmo com as
+  evidências certas (ex.: atribuir a Ana o controle da Delta, que é de Diego). As citações
+  são validadas contra o contexto, mas o sentido das frases não; confira as evidências.
+- O reconhecimento de entidades na pergunta é por nome/id (sem sinônimos ou apelidos).
+- Documentos novos ainda não têm ingestão nem extração automática de entidades.
 
 ## Próximos passos (GraphRAG)
 
-O pacote [`backend/internal/rag`](backend/internal/rag/rag.go) define as interfaces do pipeline:
+Implementado: embeddings dos documentos e índice vetorial (`make index`), recuperação
+vetorial + entidades da pergunta, expansão no grafo, contexto com ids, resposta em streaming
+com validação de citações (`POST /api/ask`) e interface de perguntas.
 
-1. **Ingestão de documentos** → nós `Document`.
-2. **Extração de entidades/relacionamentos** (`Extractor`) com o modelo de chat.
-3. **Embeddings** (`Embedder`, já implementado por `ollama.Client.Embed` via `POST /api/embed`).
-4. **Índice vetorial** no Neo4j: nova migração com a dimensão real do modelo
-   (modelo em [`neo4j/migrations/README.md`](neo4j/migrations/README.md)); validar contra `OLLAMA_EMBED_DIMENSIONS`.
-5. **Recuperação vetorial** (`Retriever`) de documentos e entidades.
-6. **Expansão no grafo** a partir dos resultados (`graph.Reader.Neighborhood`, já implementado).
-7. **Construção de contexto** (`ContextBuilder`) com ids das evidências.
-8. **Geração de respostas** (`Generator`) citando as evidências recuperadas.
+Pendente (detalhes em [Docs/graphrag-roadmap.md](Docs/graphrag-roadmap.md)):
+
+1. Ingestão de documentos novos (endpoint/CLI).
+2. Extração de entidades e relacionamentos com validação e revisão humana.
+3. Embeddings de entidades (não só documentos) e busca híbrida (vetor + texto completo).
+4. Conjunto de avaliação de perguntas/respostas e métricas de qualidade.

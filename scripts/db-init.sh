@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Applies Neo4j migrations and loads the synthetic dataset (idempotent).
+# Applies Neo4j migrations, loads the synthetic dataset and computes document
+# embeddings (all idempotent). Extra flags are passed to the seed command:
+#   --migrate-only, --embeddings-only, --skip-embeddings
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_env
 
-step "Database (migrations + seed)"
+step "Database (migrations, seed, embeddings)"
 mkdir -p "$BACKEND_DIR/bin"
 (cd "$BACKEND_DIR" && go build -o bin/seed ./cmd/seed) || die "failed to build the seed command"
 
@@ -12,5 +14,5 @@ if [[ "$*" == *--migrate-only* ]]; then
   ok "migrations up to date"
 else
   summary="$(sed -n '/^{/,$p' <<<"$out" | tr -d '\n ' )"
-  ok "seed applied: $summary"
+  ok "done: $summary"
 fi

@@ -9,20 +9,13 @@ Files named `NNN_description.cypher` are applied in lexical order by the backend
   nodes so already applied files are skipped.
 - Never edit an applied migration; add a new file instead.
 
-## Vector index (next stage — not applied)
+## Vector index
 
-The vector index for GraphRAG depends on the dimension of the embedding model
-configured in `OLLAMA_EMBED_MODEL`. It is deliberately **not** created here.
-When the embedding pipeline is implemented, add a migration such as
-`002_document_embeddings.cypher`, replacing `<DIMENSIONS>` with the real output
-size of the selected model (e.g. `nomic-embed-text` → 768), and verify it with
-`OLLAMA_EMBED_DIMENSIONS`:
+`002_document_embeddings.cypher` creates `document_embedding` on `Document.embedding`
+with **768 dimensions** (cosine), matching `OLLAMA_EMBED_MODEL=embeddinggemma:300m`.
+The indexer (`go run ./cmd/seed`) checks the index dimension against
+`OLLAMA_EMBED_DIMENSIONS` and the real model output before writing vectors.
 
-```cypher
-CREATE VECTOR INDEX document_embedding IF NOT EXISTS
-FOR (d:Document) ON (d.embedding)
-OPTIONS { indexConfig: {
-  `vector.dimensions`: <DIMENSIONS>,
-  `vector.similarity_function`: 'cosine'
-}};
-```
+To switch embedding models, add a new migration that drops and recreates the index
+with the new dimension, update `OLLAMA_EMBED_MODEL`/`OLLAMA_EMBED_DIMENSIONS`, and run
+`make index` (vectors from another model are re-generated automatically).

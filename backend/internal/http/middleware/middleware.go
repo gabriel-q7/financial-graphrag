@@ -75,6 +75,9 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach Flush/SetWriteDeadline (needed for SSE).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // Logging logs one line per request with a request id (also echoed in X-Request-ID).
 func Logging(log *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {

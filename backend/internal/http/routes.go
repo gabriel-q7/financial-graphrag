@@ -13,6 +13,7 @@ import (
 type Deps struct {
 	Health        handlers.HealthRunner
 	Graph         *handlers.Graph
+	Ask           *handlers.Ask   // nil disables POST /api/ask
 	Admin         *handlers.Admin // nil disables admin routes
 	AllowedOrigin string
 	Log           *slog.Logger
@@ -26,6 +27,9 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/entities", d.Graph.Search)
 	mux.HandleFunc("GET /api/graph/{id}", d.Graph.Entity)
 	mux.HandleFunc("GET /api/graph/{id}/neighbors", d.Graph.Neighbors)
+	if d.Ask != nil {
+		mux.HandleFunc("POST /api/ask", d.Ask.Handle)
+	}
 	if d.Admin != nil {
 		mux.HandleFunc("POST /api/admin/seed", d.Admin.RunSeed)
 	}

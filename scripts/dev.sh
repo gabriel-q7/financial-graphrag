@@ -5,7 +5,7 @@
 # use `make stop` to stop them).
 #
 # Options (environment variables):
-#   SKIP_MODELS=1  do not pull missing Ollama models
+#   SKIP_MODELS=1  do not pull missing Ollama models (also skips embeddings)
 #   SKIP_SEED=1    only apply migrations, do not (re)apply the dataset
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCRIPTS="$ROOT_DIR/scripts"
@@ -34,7 +34,10 @@ step "Build API"
 (cd "$BACKEND_DIR" && go build -o bin/api ./cmd/api) || die "API build failed"
 ok "backend/bin/api"
 
-if [[ "${SKIP_SEED:-0}" == "1" ]]; then "$SCRIPTS/db-init.sh" --migrate-only; else "$SCRIPTS/db-init.sh"; fi
+# Embeddings need the Ollama embedding model; skip them when models were skipped.
+seed_flags=()
+[[ "${SKIP_MODELS:-0}" == "1" ]] && seed_flags+=(--skip-embeddings)
+if [[ "${SKIP_SEED:-0}" == "1" ]]; then "$SCRIPTS/db-init.sh" --migrate-only; else "$SCRIPTS/db-init.sh" "${seed_flags[@]}"; fi
 
 # --- Run API and frontend ---------------------------------------------------
 pids=()

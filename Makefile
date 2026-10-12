@@ -8,7 +8,7 @@ SHELL := /usr/bin/env bash
 SCRIPTS := ./scripts
 COMPOSE := docker compose
 
-.PHONY: help dev setup env check services models db seed migrate stop-apps stop down reset-db \
+.PHONY: help dev setup env check services models db seed migrate index stop-apps stop down reset-db \
         status logs logs-services test test-backend test-frontend test-integration lint build clean
 
 help: ## List available targets
@@ -55,11 +55,14 @@ models: ## Pull configured Ollama models that are missing
 
 db: seed ## Alias for seed
 
-seed: ## Apply migrations and the synthetic dataset (idempotent)
+seed: ## Apply migrations, the synthetic dataset and document embeddings (idempotent)
 	@$(SCRIPTS)/db-init.sh
 
 migrate: ## Apply migrations only
 	@$(SCRIPTS)/db-init.sh --migrate-only
+
+index: ## Compute missing/stale document embeddings (needs Ollama)
+	@$(SCRIPTS)/db-init.sh --embeddings-only
 
 reset-db: ## DELETE all Neo4j data and reseed (asks for confirmation)
 	@$(SCRIPTS)/reset-db.sh

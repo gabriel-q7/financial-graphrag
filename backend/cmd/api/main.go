@@ -17,8 +17,9 @@ import (
 	"github.com/gabrielaquino/financial-graphrag/backend/internal/health"
 	apihttp "github.com/gabrielaquino/financial-graphrag/backend/internal/http"
 	"github.com/gabrielaquino/financial-graphrag/backend/internal/http/handlers"
+	"github.com/gabrielaquino/financial-graphrag/backend/internal/llm"
 	"github.com/gabrielaquino/financial-graphrag/backend/internal/ollama"
-	"github.com/gabrielaquino/financial-graphrag/backend/internal/seed"
+	"github.com/gabrielaquino/financial-graphrag/backend/internal/rag"
 )
 
 func main() {
@@ -65,10 +66,25 @@ func run() error {
 	cancel()
 
 	ollamaClient := ollama.New(cfg.OllamaURL, cfg.OllamaChatModel, cfg.OllamaEmbedModel, nil)
+	generator, embedder, err := llm.NewOllama(llm.Config{
+		OllamaURL: cfg.OllamaURL, ChatModel: cfg.OllamaChatModel, EmbedModel: cfg.OllamaEmbedModel,
+		NumCtx: 4096, KeepAlive: "10m",
+	})
+	if err != nil {
+		return err
+	}
+	graphRepo := graph.NewRepository(driver, cfg.Neo4jDatabase)
+	ragStore := rag.NewNeo4jStore(driver, cfg.Neo4jDatabase)
 
 	deps := apihttp.Deps{
-		Health:        &health.Checker{Neo4j: driver, Ollama: ollamaClient, Timeout: cfg.HealthTimeout, Log: log},
-		Graph:         &handlers.Graph{Reader: graph.NewRepository(driver, cfg.Neo4jDatabase), Timeout: cfg.DBTimeout, Log: log},
+		Health: &health.Checker{Neo4j: driver, Ollama: ollamaClient, Timeout: cfg.HealthTimeout, Log: log},
+		Graph:  &handlers.Graph{Reader: graphRepo, Timeout: cfg.DBTimeout, Log: log},
+		Ask: &handlers.Ask{
+			Service:   &rag.Service{Embedder: embedder, Generator: generator, Store: ragStore, Graph: graphRepo, Log: log},
+			Timeout:   5 * time.Minute,
+			Heartbeat: 10 * time.Second,
+			Log:       log,
+		},
 		AllowedOrigin: cfg.CORSAllowedOrigin,
 		Log:           log,
 	}
@@ -77,8 +93,20 @@ func run() error {
 			Token:   cfg.AdminToken,
 			Timeout: 60 * time.Second,
 			Log:     log,
-			Seed: func(ctx context.Context) (seed.Result, error) {
-				return database.MigrateAndSeed(ctx, driver, cfg.Neo4jDatabase, cfg.MigrationsDir, cfg.SeedFile, log)
+			Seed: func(ctx context.Context) (any, error) {
+				res, err := database.MigrateAndSeed(ctx, driver, cfg.Neo4jDatabase, cfg.MigrationsDir, cfg.SeedFile, log)
+				if err != nil {
+					return nil, err
+				}
+				out := map[string]any{"seed": res}
+				ix := rag.Indexer{Store: ragStore, Embedder: embedder, Dimensions: cfg.OllamaEmbedDimensions, Log: log}
+				if emb, err := ix.Run(ctx); err != nil {
+					log.Warn("seed: embeddings skipped", "err", err)
+					out["embeddingsError"] = "embeddings not updated; check that Ollama is running with the embedding model"
+				} else {
+					out["embeddings"] = emb
+				}
+				return out, nil
 			},
 		}
 		log.Warn("admin seed endpoint enabled (development only)")
@@ -89,7 +117,7 @@ func run() error {
 		Handler:           apihttp.NewRouter(deps),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      90 * time.Second,
+		WriteTimeout:      90 * time.Second, // /api/ask extends its own deadline
 		IdleTimeout:       60 * time.Second,
 	}
 

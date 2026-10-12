@@ -7,12 +7,10 @@ import (
 	"net"
 	"net/http"
 	"time"
-
-	"github.com/gabrielaquino/financial-graphrag/backend/internal/seed"
 )
 
-// SeedFunc loads the synthetic dataset.
-type SeedFunc func(ctx context.Context) (seed.Result, error)
+// SeedFunc loads the synthetic dataset (and indexes it) and returns a JSON-serializable summary.
+type SeedFunc func(ctx context.Context) (any, error)
 
 // Admin serves local-development administrative endpoints.
 // It is only registered when ADMIN_SEED_ENABLED=true and APP_ENV != production.
@@ -43,7 +41,7 @@ func (h *Admin) RunSeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "seed_failed", "seed failed; check server logs")
 		return
 	}
-	h.Log.Info("seed completed", "nodesCreated", res.NodesCreated, "relationshipsCreated", res.RelationshipsCreated)
+	h.Log.Info("seed completed")
 	writeJSON(w, http.StatusOK, res)
 }
 

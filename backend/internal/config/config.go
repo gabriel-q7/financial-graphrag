@@ -61,21 +61,22 @@ func Load(getenv func(string) string) (Config, error) {
 
 	var errs []error
 	cfg := Config{
-		Env:               get("APP_ENV", "development"),
-		HTTPAddr:          get("HTTP_ADDR", "127.0.0.1:8080"),
-		CORSAllowedOrigin: get("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
-		Neo4jURI:          get("NEO4J_URI", "neo4j://localhost:7687"),
-		Neo4jUser:         get("NEO4J_USER", "neo4j"),
-		Neo4jPassword:     getenv("NEO4J_PASSWORD"),
-		Neo4jDatabase:     get("NEO4J_DATABASE", "neo4j"),
-		OllamaURL:         strings.TrimRight(get("OLLAMA_URL", "http://localhost:11434"), "/"),
-		OllamaChatModel:   get("OLLAMA_CHAT_MODEL", "qwen3:4b-instruct"),
-		OllamaEmbedModel:  get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
-		MigrationsDir:     get("MIGRATIONS_DIR", "../neo4j/migrations"),
-		SeedFile:          get("SEED_FILE", "../data/seed/financial_network.json"),
-		AdminToken:        getenv("ADMIN_TOKEN"),
-		DBTimeout:         10 * time.Second,
-		HealthTimeout:     3 * time.Second,
+		Env:                   get("APP_ENV", "development"),
+		HTTPAddr:              get("HTTP_ADDR", "127.0.0.1:8080"),
+		CORSAllowedOrigin:     get("CORS_ALLOWED_ORIGIN", "http://localhost:5173"),
+		Neo4jURI:              get("NEO4J_URI", "neo4j://localhost:7687"),
+		Neo4jUser:             get("NEO4J_USER", "neo4j"),
+		Neo4jPassword:         getenv("NEO4J_PASSWORD"),
+		Neo4jDatabase:         get("NEO4J_DATABASE", "neo4j"),
+		OllamaURL:             strings.TrimRight(get("OLLAMA_URL", "http://localhost:11434"), "/"),
+		OllamaChatModel:       get("OLLAMA_CHAT_MODEL", "qwen3:4b-instruct"),
+		OllamaEmbedModel:      get("OLLAMA_EMBED_MODEL", "embeddinggemma:300m"),
+		MigrationsDir:         get("MIGRATIONS_DIR", "../neo4j/migrations"),
+		SeedFile:              get("SEED_FILE", "../data/seed/financial_network.json"),
+		AdminToken:            getenv("ADMIN_TOKEN"),
+		OllamaEmbedDimensions: 768,
+		DBTimeout:             10 * time.Second,
+		HealthTimeout:         3 * time.Second,
 	}
 
 	switch cfg.Env {

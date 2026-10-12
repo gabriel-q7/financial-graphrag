@@ -1,4 +1,6 @@
-// Package ollama is a small HTTP client for the local Ollama API.
+// Package ollama is a small HTTP client for Ollama server metadata (version and
+// installed models), used by health checks. Chat and embeddings go through
+// langchaingo (internal/llm).
 package ollama
 
 import (
@@ -21,10 +23,10 @@ type Client struct {
 	http       *http.Client
 }
 
-// New builds a client. httpClient may be nil.
+// New builds a client. httpClient may be nil; calls are bounded by their context.
 func New(baseURL, chatModel, embedModel string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 60 * time.Second}
+		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), chatModel: chatModel, embedModel: embedModel, http: httpClient}
 }
@@ -78,25 +80,6 @@ func HasModel(models []string, name string) bool {
 		}
 	}
 	return false
-}
-
-// Embed calls POST /api/embed with the configured embedding model.
-// It is ready for the GraphRAG ingestion stage; nothing calls it yet.
-func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	if len(texts) == 0 {
-		return nil, nil
-	}
-	var out struct {
-		Embeddings [][]float32 `json:"embeddings"`
-	}
-	req := map[string]any{"model": c.embedModel, "input": texts}
-	if err := c.do(ctx, http.MethodPost, "/api/embed", req, &out); err != nil {
-		return nil, err
-	}
-	if len(out.Embeddings) != len(texts) {
-		return nil, fmt.Errorf("ollama returned %d embeddings for %d inputs", len(out.Embeddings), len(texts))
-	}
-	return out.Embeddings, nil
 }
 
 // ErrStatus is returned for non-2xx responses.

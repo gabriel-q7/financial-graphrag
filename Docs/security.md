@@ -52,6 +52,17 @@ Uma única origem permitida (`CORS_ALLOWED_ORIGIN`), sem curingas e sem credenci
 `POST /api/admin/seed` exige, cumulativamente: `ADMIN_SEED_ENABLED=true`, `APP_ENV≠production`
 (senão a rota nem é registrada), cliente loopback e `X-Admin-Token` correto.
 
+### Perguntas à IA (`/api/ask`)
+
+- Pergunta de 3–500 caracteres; corpo ≤ 8 KB; campos desconhecidos rejeitados.
+- Uma pergunta por vez (`429`), prazo total de 5 min, cancelamento ao desconectar.
+- Injeção de instruções: textos de documentos vão delimitados por `<<< >>>` e o prompt de
+  sistema manda tratá-los como dados; a resposta só pode citar ids do contexto e citações
+  fora dele são marcadas como inválidas na interface.
+- O modelo só recebe o subgrafo recuperado (≤ 30 nós) e propriedades da whitelist —
+  embeddings e campos técnicos não entram no prompt.
+- Sem evidência, a LLM não é chamada.
+
 ### Disponibilidade
 
 Timeouts em todas as camadas (servidor HTTP, consultas, driver, health, cliente Ollama) e
@@ -72,7 +83,8 @@ número de conta ou agência. Os documentos registram que padrões não são con
 | Seed admin depende de `RemoteAddr` | atrás de proxy reverso, todo tráfego pareceria loopback | desabilitar (`ADMIN_SEED_ENABLED=false`) ou autenticar de outra forma |
 | Neo4j sem TLS | tráfego Bolt em claro | `neo4j+s://` e certificados |
 | Vite dev server | não é servidor de produção | servir o build estático (`npm run build`) |
-| Etapa 2: texto de documentos vai para a LLM | injeção de instruções | ver [Roadmap — riscos](graphrag-roadmap.md#riscos) |
+| Texto de documentos vai para a LLM | injeção de instruções; mitigada (delimitadores, regra no prompt, validação de ids), não eliminada | revisar documentos ingeridos; nunca dar ferramentas/ações ao modelo |
+| `/api/ask` sem autenticação | qualquer processo local ocupa a CPU com perguntas | autenticação + rate limit por usuário |
 
 ## Checklist para mudanças
 

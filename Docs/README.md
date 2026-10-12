@@ -17,11 +17,12 @@ estes documentos aprofundam cada parte. Para rodar tudo: `make dev` (detalhes em
 ## Visão geral em uma frase
 
 Uma API Go lê um grafo financeiro sintético no Neo4j e o entrega a uma interface React Flow
-que o explora de forma progressiva; o Ollama já está integrado (saúde e embeddings) para a
-etapa seguinte, em que perguntas em linguagem natural serão respondidas com recuperação
-vetorial + travessia do grafo.
+que o explora de forma progressiva; perguntas em linguagem natural são respondidas por uma LLM
+local (Ollama, via langchaingo) usando só evidências recuperadas do grafo — busca vetorial nos
+documentos, entidades citadas na pergunta e travessia a partir delas — com os ids citados
+validados.
 
-## Estado atual (etapa 1)
+## Estado atual
 
 | Item | Estado |
 | --- | --- |
@@ -29,6 +30,8 @@ vetorial + travessia do grafo.
 | Migrações e seed idempotentes | Implementado e testado contra Neo4j real |
 | API: saúde, meta, busca, grafo, vizinhança, seed admin | Implementado |
 | Frontend de exploração | Implementado e verificado em navegador |
-| Cliente Ollama: versão, modelos, embeddings | Implementado (embeddings testados só com servidor falso) |
-| Extração, índice vetorial, recuperação, geração | Apenas interfaces (`backend/internal/rag`) |
-| Endpoint de chat | Não existe, por decisão (ver [Arquitetura](architecture.md#decisões)) |
+| Embeddings dos documentos + índice vetorial no Neo4j | Implementado (`make index`, idempotente) |
+| Perguntas com GraphRAG (`POST /api/ask`, streaming SSE) | Implementado e verificado com os modelos reais |
+| Aba "Perguntar à IA" com citações clicáveis e evidências no grafo | Implementado e verificado em navegador |
+| Camada de modelos via langchaingo | Implementado (`backend/internal/llm`) |
+| Ingestão de documentos novos, extração de entidades | Pendente ([Roadmap](graphrag-roadmap.md)) |

@@ -9,13 +9,17 @@ frontend/src/
 ├── main.tsx                     monta <App/> e importa estilos (React Flow + styles.css)
 ├── App.tsx                      ReactFlowProvider + GraphExplorer
 ├── styles.css                   tema escuro, layout responsivo, estilos de nós
-├── lib/api.ts                   cliente HTTP único, ApiError, timeout de 15 s
+├── lib/api.ts                   cliente HTTP único, ApiError, timeout de 15 s; ask() lê o stream SSE
+├── lib/sse.ts                   parser incremental de Server-Sent Events
 ├── types/graph.ts               tipos espelhando os DTOs do backend
 ├── components/
 │   ├── Sidebar.tsx              busca, filtros de entidade/relacionamento, opções de expansão
 │   ├── DetailsPanel.tsx         propriedades, conexões carregadas, ações
 │   ├── HealthBadge.tsx          status de neo4j/ollama no topo
 │   └── StateMessage.tsx         estados de carregamento / erro / vazio
+├── features/ask/
+│   ├── AskPanel.tsx             aba "Perguntar à IA": pergunta, progresso, resposta em streaming, evidências
+│   └── citations.ts             separa ids da resposta para virarem botões
 └── features/graph/
     ├── GraphExplorer.tsx        orquestração: estado, chamadas à API, renderização das 3 áreas
     ├── GraphCanvas.tsx          <ReactFlow> com controles, minimapa, botão Centralizar, contadores
@@ -25,6 +29,30 @@ frontend/src/
     ├── graphModel.test.ts       testes das funções puras
     └── presentation.ts          cores, rótulos e formatação (moeda, datas, títulos)
 ```
+
+## Perguntas à IA (`AskPanel`)
+
+O painel direito tem duas abas: **Perguntar à IA** (padrão) e **Detalhes**. Clicar num nó do
+grafo abre Detalhes; clicar numa citação mantém a aba de perguntas. As duas ficam montadas,
+então trocar de aba não interrompe uma resposta.
+
+| Fase | O que aparece |
+| --- | --- |
+| Ociosa | caixa de pergunta (Enter envia, Shift+Enter quebra linha) e 3 exemplos |
+| `retrieving` | "Buscando evidências no grafo…" + cronômetro |
+| `reading` | "O modelo está lendo as evidências…" (fase mais longa em CPU) |
+| `generating` | texto chegando com cursor piscando |
+| `done` | resposta, modelo, tokens, tok/s e aviso para conferir as evidências |
+| `error` | mensagem em pt-BR por código (`busy`, `model_unavailable`, …) |
+
+- Ids na resposta (`[per_004]` ou `per_004`) viram botões (`splitAnswer`). Clicar: se o nó
+  está no canvas, seleciona e centraliza; senão, mostra o grafo de evidências centrado nele.
+- Ids citados fora das evidências aparecem riscados em vermelho e desabilitados.
+- Nós citados recebem a classe `is-cited` (contorno âmbar) no canvas.
+- **Ver evidências no grafo** substitui o canvas pelo subgrafo usado na resposta (nós,
+  relações e documentos), com layout radial a partir do primeiro id citado.
+- **Cancelar** aborta o `fetch`; a API cancela a geração no Ollama.
+- Se o Ollama não está `ok` em `/api/health`, o painel avisa antes de perguntar.
 
 ## Layout
 

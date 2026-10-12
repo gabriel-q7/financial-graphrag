@@ -57,7 +57,7 @@ func newTestRouter(reader *fakeReader, healthStatus string, withAdmin bool, seed
 	}
 	if withAdmin {
 		d.Admin = &handlers.Admin{Token: adminToken, Timeout: time.Second, Log: log,
-			Seed: func(context.Context) (seed.Result, error) { return seed.Result{Nodes: 3}, seedErr }}
+			Seed: func(context.Context) (any, error) { return seed.Result{Nodes: 3}, seedErr }}
 	}
 	return NewRouter(d)
 }

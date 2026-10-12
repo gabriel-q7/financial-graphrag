@@ -2,7 +2,6 @@ package ollama
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -15,25 +14,14 @@ func TestClientAgainstFakeServer(t *testing.T) {
 		case "/api/version":
 			_, _ = w.Write([]byte(`{"version":"0.34.4"}`))
 		case "/api/tags":
-			_, _ = w.Write([]byte(`{"models":[{"name":"nomic-embed-text:latest"},{"name":"qwen3:4b-instruct"}]}`))
-		case "/api/embed":
-			var body struct {
-				Model string   `json:"model"`
-				Input []string `json:"input"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Model != "nomic-embed-text" || len(body.Input) != 2 {
-				http.Error(w, "bad", http.StatusBadRequest)
-				return
-			}
-			_, _ = w.Write([]byte(`{"embeddings":[[0.1,0.2],[0.3,0.4]]}`))
+			_, _ = w.Write([]byte(`{"models":[{"name":"embeddinggemma:300m"},{"name":"qwen3:4b-instruct"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL+"/", "qwen3:4b-instruct", "nomic-embed-text", nil)
+	c := New(srv.URL+"/", "qwen3:4b-instruct", "embeddinggemma:300m", nil)
 	ctx := context.Background()
 
 	v, err := c.Version(ctx)
@@ -44,12 +32,8 @@ func TestClientAgainstFakeServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasModel(models, "nomic-embed-text") || !HasModel(models, "qwen3:4b-instruct") || HasModel(models, "mistral") {
+	if !HasModel(models, "embeddinggemma:300m") || !HasModel(models, "qwen3:4b-instruct") || HasModel(models, "mistral") {
 		t.Fatalf("HasModel mismatch for %v", models)
-	}
-	emb, err := c.Embed(ctx, []string{"a", "b"})
-	if err != nil || len(emb) != 2 || len(emb[0]) != 2 {
-		t.Fatalf("embed: %v %v", emb, err)
 	}
 }
 
@@ -61,5 +45,15 @@ func TestClientStatusError(t *testing.T) {
 	_, err := New(srv.URL, "", "", nil).Version(context.Background())
 	if !errors.Is(err, ErrStatus) {
 		t.Fatalf("expected ErrStatus, got %v", err)
+	}
+}
+
+func TestHasModel(t *testing.T) {
+	models := []string{"nomic-embed-text:latest", "qwen3:4b-instruct"}
+	if !HasModel(models, "nomic-embed-text") || !HasModel(models, "qwen3:4b-instruct") {
+		t.Fatal("expected matches")
+	}
+	if HasModel(models, "qwen3:4b") || HasModel(models, "") {
+		t.Fatal("unexpected match")
 	}
 }

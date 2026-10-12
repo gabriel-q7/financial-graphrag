@@ -38,6 +38,15 @@ Todo nó tem **dois rótulos**: `:Entity` (técnico) e um rótulo de domínio.
 | `Document` | `doc_` | `text`, `source` | String | `source`: `internal_note`, `kyc_record`, `device_alert`, `news_article`, `analyst_report` |
 | | | `created_at` | DateTime | |
 
+`Document` também guarda campos técnicos de busca, **nunca expostos pela API**:
+
+| Propriedade | Tipo | Conteúdo |
+| --- | --- | --- |
+| `embedding` | List<Float> (768) | vetor do texto (`embeddinggemma:300m`, com prompt de documento) |
+| `embedding_model` | String | modelo que gerou o vetor |
+| `embedding_hash` | String | SHA-256 de modelo + texto; muda → reindexa |
+| `embedded_at` | DateTime | data da indexação |
+
 A fonte de verdade dessa tabela é `graph.NodeSpecs` e `graph.RelSpecs` em
 `backend/internal/graph/model.go`. Só as propriedades listadas são expostas pela API.
 
@@ -58,6 +67,7 @@ Definidos em `neo4j/migrations/001_constraints.cypher`:
 | `company_name` | range | `:Company(name)` |
 | `transaction_timestamp` | range | `:Transaction(timestamp)` |
 | `document_created_at` | range | `:Document(created_at)` |
+| `document_embedding` | vetorial (768, cosseno) | `:Document(embedding)` — migração 002 |
 
 ## Migrações
 
@@ -70,9 +80,14 @@ Definidos em `neo4j/migrations/001_constraints.cypher`:
 - Aplicadas por `go run ./cmd/seed --migrate-only`, pelo seed completo, pela rota admin e no
   start da API (se o Neo4j estiver acessível).
 
-O índice vetorial da etapa 2 tem um modelo em `neo4j/migrations/README.md` e só deve ser
-criado com a dimensão real do modelo de embeddings
-(ver [Roadmap GraphRAG](graphrag-roadmap.md#4-índice-vetorial)).
+O índice vetorial (`002_document_embeddings.cypher`) usa a dimensão do modelo configurado. O
+indexador recusa gravar vetores se o índice, `OLLAMA_EMBED_DIMENSIONS` ou a saída do modelo
+divergirem (ver [IA local](ai-models.md#modelo-de-embeddings-embeddinggemma300m)).
+
+## Embeddings
+
+`make index` (ou `make seed`, que também indexa) calcula vetores só para documentos novos, com
+texto alterado ou gerados por outro modelo — reexecutar não faz nada (`embedded: 0`).
 
 ## Seed
 

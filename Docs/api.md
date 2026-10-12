@@ -65,7 +65,7 @@ Estado da API e das dependências. Sempre `Cache-Control: no-store`.
       "details": {
         "version": "0.34.4",
         "chatModel": { "name": "qwen3:4b-instruct", "available": true },
-        "embeddingModel": { "name": "nomic-embed-text", "available": false }
+        "embeddingModel": { "name": "embeddinggemma:300m", "available": false }
       }
     }
   },
@@ -139,9 +139,72 @@ curl -s 'http://localhost:8080/api/graph/acc_001/neighbors?depth=3&limit=10&rela
 Quando `meta.truncated` é `true`, algum limite cortou o resultado: os nós de um nível foram
 escolhidos por ordem de `id`, não por relevância.
 
+## `POST /api/ask`
+
+Responde uma pergunta em linguagem natural com GraphRAG. A resposta é um stream
+**Server-Sent Events** (`Content-Type: text/event-stream`).
+
+Corpo:
+
+```json
+{ "question": "Por que a conta da Ana Ribeiro merece revisão?" }
+```
+
+| Regra | Valor |
+| --- | --- |
+| Tamanho da pergunta | 3–500 caracteres (após `trim`) |
+| Campos extras no JSON | rejeitados (`400`) |
+| Concorrência | uma pergunta por vez; outra simultânea recebe `429 busy` |
+| Tempo máximo | 5 min (o stream estende o prazo de escrita do servidor) |
+| Cancelamento | fechar a conexão interrompe a geração no Ollama |
+
+Erros **antes** do stream são JSON comuns:
+
+| HTTP | `code` | Quando |
+| --- | --- | --- |
+| 400 | `invalid_parameter` | corpo ou pergunta inválidos |
+| 429 | `busy` | outra pergunta em andamento |
+| 503 | `model_unavailable` | Ollama ou modelo de embeddings indisponível |
+| 503 | `graph_unavailable` | Neo4j indisponível |
+| 504 | `timeout` | recuperação excedeu o prazo |
+
+Eventos do stream, nesta ordem:
+
+| Evento | `data` | Observação |
+| --- | --- | --- |
+| `retrieval` | `{question, entities[], documents[{node, score}], nodes[], edges[], noEvidence, contextChars, durationMs}` | evidências usadas; `score` = similaridade (0–1) ou `-1` para documento alcançado pelo grafo |
+| `status` | `{"phase":"generating"}` | antes de chamar o modelo (ausente se `noEvidence`) |
+| `token` | `{"text": "..."}` | um por fragmento gerado |
+| `done` | `{answer, citations: {valid[], invalid[]}, model, noEvidence, stats, durationMs}` | `invalid` = ids citados que não estavam nas evidências |
+| `error` | `{code, message}` | falha depois do início do stream (`model_unavailable`, `timeout`) |
+
+Linhas `: keep-alive` são enviadas a cada 10 s enquanto o modelo lê as evidências.
+`stats` = `{model, promptTokens, generatedTokens, firstTokenMs, generationMs, tokensPerSecond}`.
+
+Sem evidências (nenhuma entidade reconhecida e nenhum documento acima do limiar), a resposta
+fixa "Não encontrei no grafo…" é enviada imediatamente, sem chamar a LLM.
+
+```bash
+curl -N -X POST http://localhost:8080/api/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Quais pessoas compartilham o mesmo dispositivo?"}'
+# event: retrieval
+# data: {"question":"…","entities":[],"documents":[{"node":{"id":"doc_003",…},"score":0.76},…],…}
+#
+# event: status
+# data: {"phase":"generating"}
+#
+# event: token
+# data: {"text":"Diego"}
+# …
+# event: done
+# data: {"answer":"Diego Farias [per_004], Fábio Lins [per_006] e Elisa Moura [per_005] compartilham …","citations":{"valid":["per_004","per_006","per_005","doc_003"],"invalid":[]},…}
+```
+
 ## `POST /api/admin/seed`
 
-Aplica migrações pendentes e carrega o dataset. Disponível apenas quando **todas** as
+Aplica migrações pendentes, carrega o dataset e atualiza os embeddings dos documentos
+(se o Ollama estiver indisponível, o seed é aplicado e a resposta traz `embeddingsError`). Disponível apenas quando **todas** as
 condições abaixo são verdadeiras; caso contrário a rota não existe (404) ou é recusada.
 
 1. `ADMIN_SEED_ENABLED=true` e `APP_ENV` diferente de `production` (senão 404);
@@ -151,7 +214,7 @@ condições abaixo são verdadeiras; caso contrário a rota não existe (404) ou
 ```bash
 set -a; source .env; set +a
 curl -s -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8080/api/admin/seed
-# {"version":"2026-10-11.1","nodes":56,"relationships":77,"nodesCreated":0,"relationshipsCreated":0,"propertiesSet":140}
+# {"seed":{"version":"2026-10-11.1","nodes":56,"relationships":77,"nodesCreated":0,…},"embeddings":{"model":"embeddinggemma:300m","documents":6,"embedded":0,"upToDate":6,…}}
 ```
 
 `nodesCreated`/`relationshipsCreated` iguais a 0 numa reexecução confirmam a idempotência.
